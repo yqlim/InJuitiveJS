@@ -11,48 +11,46 @@
 
     var error = {
         noArgs: function(name){
-            console.error('InJ.' + name + ' is called without argument.');
+            return new TypeError(util.method(name) + ' is called without argument.');
         },
         insufficientArgs: function(name, needed, given){
-            console.error('InJ.' + name + ' is called with insufficient arguments.' + needed + ' is needed, only ' + given + ' given.');
+            return new TypeError(util.method(name) + ' is called with insufficient arguments.' + needed + ' is needed, only ' + given + ' given.');
         },
         invalidArgs: function(name, value, index){
-            if (value.constructor !== Array)
-                if (value === undefined)
-                    value = ['undefined'];
-                else if (value === null)
-                    value = ['null'];
-                else
-                    value = [value];
-
-            if (index.constructor !== Array)
-                index = [index];
-
-            value = value.join(', ');
-            index = value.join(', ');
-
-            console.error('InJ.' + name + ' is supplied with invalid argument(s): ' + value + ' at index(es) ' + index + '.');
+            return new TypeError(util.method(name) + ' is supplied with invalid argument(s).');
         },
         chained: function(name){
-            console.error('InJ.' + name + ' cannot be chained from a non-empty InJ instance.');
+            return new SyntaxError(util.method(name) + ' cannot be chained from a non-empty InJ instance.');
+        },
+        notChained: function(name){
+            return new SyntaxError(util.method(name) + ' must be chained from a InJuitive instance.');
         },
         empty: function(name){
-            console.error('InJ.' + name + ' is supplied with an empty list.');
+            return new TypeError(util.method(name) + ' is supplied with an empty list.');
+        },
+        unexpected: function(name){
+            return new Error(util.method(name) + ': unexpected error.');
         }
     };
 
     var util = {
+        wrapper: function(name, method){
+            return {
+                value: function(){
+                    if (this === InJ && arguments.length < 1)
+                        throw error.noArgs(name);
+                    return method.apply(this, arguments);
+                }
+            }
+        },
+        method: function(name){
+            return 'InJ.' + name;
+        },
         prevOrArgs: function(inst, args){
             // If `this` is not InJ instance, return args, else this.prev
             return inst === InJ
                 ? args
                 : inst.prev;
-        },
-        return: function(inst, prev){
-            // If `this` is not InJ instance, return new InJ instance, else the instance
-            return inst === InJ
-                ? InJ(prev)
-                : prev;
         },
         parseNegativeIndex: function(from, len){
             // Adjust index if `from` is negative
@@ -62,21 +60,41 @@
                     from = 0;
 
             return from;
+        },
+        noReturn: function(inst, list){
+            return inst === InJ // If `inst` is not InJ instance
+                ? InJ(list)     // returns new InJ instance using `inst`
+                : list;         // else returns `inst`
+        },
+        affectOriginal: function(inst, value){
+            var ret;
+            if (inst === InJ){
+                ret = InJ(value);
+                ret.prev = inst;
+            } else {
+                ret = inst.toStack(value);
+            }
+            return ret;
+        },
+        noAffectOriginal: function(value, prev){
+            var ret = InJ(value);
+            ret.prev = prev;
+            return ret;
         }
     }
 
 
-    var InJ = function InJ(value, origin){
+    var InJ = function InJ(value){
         var len = arguments.length;
         return len < 1
             ? new InJ.init()
             : value instanceof InJ.init
                 ? len > 1
-                    ? value.toStack(value, origin)
+                    ? value.toStack(value)
                     : value
                 : len > 1
-                    ? new InJ.init(value, origin)
-                    : new InJ.init(value)
+                    ? new InJ.init(value)
+                    : new InJ.init(value);
     }
 
     InJ.init = function(){
@@ -99,7 +117,7 @@
         });
 
         return len > 0
-            ? InJ.toStack.apply(this, arguments)
+            ? this.toStack(arguments[0], false)
             : this;
     };
 
@@ -111,16 +129,14 @@
             len = arguments.length;
 
         if (!rootObj)
-            return error.invalidArgs('define', rootObj, 0);
+            throw error.invalidArgs('define');
 
         // Extends InJ and its prototype if only 1 argument present
         if (len === 1){
 
             obj = rootObj;
             for (k in obj){
-                temp = {
-                    value: obj[k]
-                };
+                temp = util.wrapper(k, obj[k]);
                 Object.defineProperty(InJ.init.prototype, k, temp);
                 Object.defineProperty(InJ, k, temp);
             }
@@ -156,28 +172,31 @@
     InJ.define({
 
         toStack: function(){
-            var valLen, prevLen,
+            var prev,
                 i = 0,
-                inst = this === InJ ? arguments[i++] : this,
+                inst = this,
                 vals = InJ.toArray(arguments[i++]),
-                prev = arguments[i];
+                updatePrev = arguments[i],
+                instLen = inst.length,
+                valLen = vals.length;
 
             if (!(inst instanceof InJ.init))
-                inst = InJ(inst);
+                throw error.notChained('toStack');
 
-            // Only set inst.origin if orig is explicitly supplied
-            if (arguments.length > i)
+            if (updatePrev !== false){
+                // Shallow copy inst[] into prev[]
+                prev = inst.slice();
+    
+                // Update inst.prev
                 inst.prev = prev;
+            }
 
-            prevLen = inst.length;
-            valLen = vals.length;
-
-            // Replacing inst[] values with vals[]
+            // Replacing inst[] with vals[]
             for (i = 0; i < valLen; i++)
                 inst[i] = vals[i];
 
-            // Removes unwanted items from list
-            _slice.call(inst, i);
+            // Removes balance items from list
+            _splice.call(inst, i);
 
             // Sets new length for inst
             inst.length = i;
@@ -255,14 +274,16 @@
 
         isNode: function(){
             var val = util.prevOrArgs(this, arguments[0]);
-            return !!val.nodeType;
+            return !val
+                ? false
+                : !!val.nodeType;
         },
 
         isDOMContent: function(){
             var val = util.prevOrArgs(this, arguments[0]);
             return !val
                 ? false
-                : /(HTML\w*(Element|Collection|Document))|Window|(DOMToken|Node)List/.test(val.constructor);
+                : /(HTML\w*(Element|Collection|Document))|Window|(DOMToken|Node)List/.test(val.constructor) || !!val.nodeType;
         },
 
         isFalsy: function(){
@@ -294,7 +315,7 @@
             var c, i, x, l, keys,
                 val = util.prevOrArgs(this, arguments[0]);
 
-            if (val === undefined || val === null)
+            if (val === undefined || val === null || typeof val === 'function')
                 return false;
 
             c = val.constructor;
@@ -340,8 +361,11 @@
             var i, c,
                 val = util.prevOrArgs(this, arguments[0]);
 
+            // Negative number, Infinity and NaN are not numeric
             if (typeof val === 'number')
-                return true;
+                return val >= 0
+                    && Math.abs(val) !== Infinity
+                    && !window.isNaN(val);
 
             if (typeof val !== 'string')
                 return false;
@@ -359,7 +383,7 @@
             return true;
         },
 
-        isAlphabet: function(){
+        isAlphabetical: function(){
             var i, c,
                 val = util.prevOrArgs(this, arguments[0]);
 
@@ -409,16 +433,16 @@
             var val = util.prevOrArgs(this, arguments[0]);
             return !val
                 ? false
-                : val.constructor === InJ
+                : val instanceof InJ.init;
         },
 
         isEmpty: function(){
             var val = util.prevOrArgs(this, arguments[0]);
 
             switch (InJ.constructorOf(val)){
-                case 'String':
+                case String:
                     return val === '';
-                case 'Object':
+                case Object:
                     return JSON.stringify(val) === JSON.stringify({});
                 default:
                     return InJ.isArrayLike(val)
@@ -430,8 +454,8 @@
         isOdd: function(){
             var val = util.prevOrArgs(this, arguments[0]);
 
-            if (typeof val !== 'number')
-                return error.invalidArgs('idOdd', val);
+            if (typeof val !== 'number' || window.isNaN(val) || Math.abs(val) === Infinity)
+                throw error.invalidArgs('isOdd');
 
             return !!(val & 1);
         },
@@ -439,20 +463,20 @@
         isEven: function(){
             var val = util.prevOrArgs(this, arguments[0]);
 
-            if (typeof val !== 'number')
-                return error.invalidArgs('idOdd', val);
+            if (typeof val !== 'number' || window.isNaN(val) || Math.abs(val) === Infinity)
+                throw error.invalidArgs('isEven');
 
             return !(val & 1);
         },
 
         constructorOf: function(){
-            var subject = this.origin || arguments[0];
+            var subject = util.prevOrArgs(this, arguments[0]);
 
             if (arguments.length === 0)
-                return error.emptyList('constructorOf');
+                throw error.empty('constructorOf');
 
             if (subject === undefined || subject === null)
-                return false;
+                return undefined;
 
             return subject.constructor;
         },
@@ -468,7 +492,10 @@
             /* Sequence must remain for it to work properly */
             /* Do not alter the sequence */
 
-            if (isUnparsable())
+            if (arguments.length < 1)
+                ret = [];
+
+            else if (isUnparsable())
                 contain();
 
             else if (item.constructor === Array)
@@ -487,7 +514,7 @@
                 contain();
 
             else
-                return error.unexpected('toArray', arguments);
+                throw error.unexpected('toArray', arguments);
 
             return ret;
 
@@ -565,7 +592,7 @@
 
             copy = InJ(copy);
             if (list instanceof InJ.init)
-                copy.prev = list.prev;
+                copy.prev = list;
 
             return copy;
         }
@@ -576,7 +603,14 @@
     // InJ VERSION OF ARRAY METHODS
     InJ.define({
 
-        // Shallow copy
+        /**
+         * Shallow copy
+         * 
+         * COPIES selected items from original list
+         * Returns COPIED list
+         * 
+         * Does not affect original list
+         */
         slice: function(){
             var i = 0,
                 x = 0,
@@ -592,7 +626,31 @@
             for (i = iStart; i < iEnd; i++, x++)
                 res[x] = list[i];
 
-            return InJ(res, list);
+            return util.noAffectOriginal(res, list);
+        },
+
+        /**
+         * REMOVES selected items from original list
+         * Returns REMOVED list
+         * 
+         * Affects original list
+         */
+        splice: function(){
+            var fake,
+                spliced,
+                i = 0,
+                list = this === InJ ? arguments[i++] : this,
+                args = _slice.call(arguments, i);
+
+            // This is needed to splice DOM Content
+            if (InJ.isDOMContent(list))
+                fake = InJ.toArray(list);
+
+            spliced = _splice.apply(fake || list, args);
+            spliced = InJ(spliced);
+            spliced.prev = list;
+            
+            return spliced;
         },
 
         forEach: function(){
@@ -610,7 +668,62 @@
             for (; i < len; i++)
                 callback.call(ctx, list[i], i, list);
 
-            return util.return(this, prev);
+            return util.noReturn(this, prev);
+        },
+
+        indexOf: function(){
+            var i = 0,
+                list = this === InJ ? InJ.toArray(arguments[i++]) : this,
+                item = arguments[i++],
+                from = arguments[i] || 0,
+                len = list.length;
+
+            if (typeof from !== 'number')
+                throw error.invalidArgs('indexOf', from, i);
+
+            from = util.parseNegativeIndex(from, len);
+
+            // Returns index right when target is found
+            for (i = from; i < len; i++)
+                if (item === list[i])
+                    return i;
+
+            return -1;
+        },
+
+        // Does not affect original list
+        reverse: function(){
+            var x = 0,
+                i = 0,
+                prev = this === InJ ? arguments[i] : this,
+                list = InJ.toArray(prev),
+                result = [];
+
+            // Add items to `result` from behind
+            for (i = list.length; i--; x++)
+                result[x] = list[i];
+
+            return util.noAffectOriginal(result, prev);
+        },
+
+        // Affects original list
+        push: function(){
+            var x,
+                len,
+                i = 0,
+                prev = this === InJ ? arguments[i++] : this,
+                item = _slice.call(arguments, i),
+                list = InJ.toArray(prev);
+
+            i = 0;
+            x = list.length;
+            len = item.length;
+
+            // Add new items to `list`
+            for (; i < len;)
+                list[x++] = item[i++];
+
+            return util.affectOriginal(this, list);
         }
 
     });
