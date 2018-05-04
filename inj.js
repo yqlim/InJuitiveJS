@@ -5,7 +5,7 @@
     var proto = [],
         _slice = proto.slice,
         _splice = proto.splice,
-        _push = proto.indexOf,
+        _push = proto.push,
         _join = proto.join,
         _bind = Function.prototype.bind;
 
@@ -595,6 +595,65 @@
                 copy.prev = list;
 
             return copy;
+        },
+
+        sort: function(){
+            var len,
+                number,
+                string,
+                others,
+                sortNum,
+                i = 0,
+                prev = this === InJ ? arguments[i++] : this,
+                list = InJ.toArray(prev),
+                method = arguments[i++],
+                result = [];
+
+            if (typeof method === 'function'){
+
+                for (i = 0, len = list.length; i < len; i++)
+                    result = list.sort(method);
+
+            } else {
+
+                number = [],
+                string = [],
+                others = [],
+                sortNum = function(v, i, a){
+                    /**
+                     * If `a` is empty || given value >= current value of `a`
+                     *     Adds value to result
+                     * else
+                     *     Moves to next iteration
+                     */
+                    if (i === -1 || v >= a[i])
+                        a.splice(++i, 0, v);
+                    else
+                        return sortNum(v, --i, a);
+                };
+
+                // Categorise arguments into groups
+                for (i = 0, len = list.length; i < len; i++){
+                    switch (typeof list[i]){
+                        case 'number': number.push(list[i]); break;
+                        case 'string': string.push(list[i]); break;
+                        default      : others.push(list[i]);
+                    }
+                }
+    
+                // Sorts numbers first
+                for (i = 0, len = number.length; i < len; i++)
+                    sortNum(number[i], result.length - 1, result);
+    
+                // Sorts strings
+                string = string.sort();
+    
+                // Concat `string` and `others` to `result`
+                result = result.concat(string, others);
+
+            }
+
+            return util.noAffectOriginal(result, prev);
         }
 
     });
@@ -724,6 +783,221 @@
                 list[x++] = item[i++];
 
             return util.affectOriginal(this, list);
+        },
+
+        unshift: function(){
+            var x,
+                len,
+                i = 0,
+                prev = this === InJ ? arguments[i++] : this,
+                list = _slice.call(prev),
+                item = _slice.call(arguments, i);
+
+            i = 0;
+            x = item.length;
+            len = list.length;
+
+            // Adds original items to new items
+            for (; i < len;)
+                item[x++] = list[i++];
+
+            return util.affectOriginal(this, item);
+        },
+
+        shift: function(){
+            var i = 0,
+                prev = this === InJ ? arguments[i] : this,
+                list = InJ.toArray(prev),
+                lim = list.length - 1,  // Because the desired length is 1 unit shorter
+                result = [];
+
+            // Adds all items to `result` except the first
+            for (; i < lim;)
+                result[i++] = list[i];
+
+            return util.affectOriginal(this, result);
+        },
+
+        pop: function(){
+            var i = 0,
+                prev = this === InJ ? arguments[i] : this,
+                list = InJ.toArray(prev),
+                lim = list.length - 1,  // Because the desired length is 1 unit shorter
+                result = [];
+
+            // Adds all items to `result` except the last
+            for (; i < lim;)
+                result[i] = list[i++];
+
+            return util.affectOriginal(this, result);
+        },
+
+        fill: function(){
+            var i = 0,
+                prev = this === InJ ? arguments[i++] : this,
+                list = InJ.toArray(prev),
+                len = list.length,
+                filler = arguments[i++],
+                from = arguments[i++] || 0,
+                to = arguments[i] || len;
+
+            if (typeof from !== 'number' || typeof to !== 'number')
+                throw error.invalidArgs('fill');
+
+            from = util.parseNegativeIndex(from, len);
+            to = util.parseNegativeIndex(to, len);
+
+            // Replaces old values with filler
+            for (i = from; i < to; i++)
+                list[i] = filler;
+
+            return util.affectOriginal(this, list);
+        },
+
+        concat: function(){
+            var i = 0,
+                prev = this === InJ ? arguments[i++] : this,
+                list = InJ.toArray(prev),
+                args = _slice.call(arguments, i),
+                len = args.length;
+
+            for (i = 0; i < len; i++)
+                // To mimic [].concat mechanics
+                if (typeof args[i].length === 'number')
+                    _push.apply(list, args[i]);
+                else
+                    _push.call(list, args[i]);
+
+            return util.noAffectOriginal(list, prev);
+        },
+
+        filter: function(){
+            var x = 0,
+                i = 0,
+                prev = this === InJ ? arguments[i++] : this,
+                list = InJ.toArray(prev),
+                method = arguments[i++],
+                ctx = arguments[i],
+                len = list.length,
+                result = [];
+
+            for (i = 0; i < len; i++)
+                // Push result of `method` into `result`
+                if (method.call(ctx, list[i], i, list) === true)
+                    result[x++] = list[i];
+
+            return util.noAffectOriginal(result, prev);
+        },
+
+        find: function(){
+            var i = 0,
+                prev = this === InJ ? arguments[i++] : this,
+                list = InJ.toArray(prev),
+                method = arguments[i++],
+                ctx = arguments[i],
+                len = list.length;
+
+            for (i = 0; i < len; i++)
+                // Returns target right when it is found
+                if (method.call(ctx, list[i], i, list) === true)
+                    return list[i];
+
+            return null;
+        },
+
+        findIndex: function(){
+            var i = 0,
+                list = this === InJ ? InJ.toArray(arguments[i++]) : this,
+                method = arguments[i++],
+                ctx = arguments[i],
+                len = list.length;
+
+            for (i = 0; i < len; i++)
+                // Returns index of target right when the target is found
+                if (method.call(ctx, list[i], i, list) === true)
+                    return i;
+
+            return -1;
+        },
+
+        every: function(){
+            var i = 0,
+                list = this === InJ ? InJ.toArray(arguments[i++]) : this,
+                method = arguments[i++],
+                ctx = arguments[i];
+
+            for (i = list.length; i--;)
+                // Return false once an iteration of `method` does not return true
+                if (method.call(ctx, list[i], i, list) !== true)
+                    return false;
+
+            return true;
+        },
+
+        some: function(){
+            var i = 0,
+                list = this === InJ ? InJ.toArray(arguments[i++]) : this,
+                method = arguments[i++],
+                ctx = arguments[i];
+
+            for (i = list.length; i--;)
+                // Return true once an iteration of `method` returns true
+                if (method.call(ctx, list[i], i, list) === true)
+                    return true;
+
+            return false;
+        },
+
+        // Shallow search the list for target
+        includes: function(){
+            var i = 0,
+                list = this === InJ ? InJ.toArray(arguments[i++]) : this,
+                item = arguments[i++],
+                from = arguments[i] || 0,
+                len = list.length;
+
+            if (typeof from !== 'number')
+                throw error.invalidArgs('includes');
+
+            from = util.parseNegativeIndex(from, len);
+
+            for (i = from; i < len; i++)
+                if (list[i] === item)
+                    return true;
+
+            return false;
+        },
+
+        map: function(){
+            var i = 0,
+                prev = this === InJ ? arguments[i++] : this,
+                list = InJ.toArray(prev),
+                method = arguments[i++],
+                ctx = arguments[i],
+                len = list.length,
+                result = [];
+
+            for (i = 0; i < len; i++)
+                // Add result of `method` into `result`
+                result[i] = method.call(ctx, list[i], i, list);
+
+            return util.noAffectOriginal(result, prev);
+        },
+
+        reduce: function(){
+            var i = 0,
+                list = this === InJ ? InJ.toArray(arguments[i++]) : this,
+                len = list.length,
+                method = arguments[i++],
+                ctx = arguments[i],
+                result = [],
+                store = ctx || 0;
+
+            for (i = 0; i < len; i++)
+                // Update `store` value each time the `method` is run
+                store = method.call(ctx, store, list[i], i, list);
+
+            return store;
         }
 
     });
