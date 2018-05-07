@@ -9,6 +9,19 @@
         _join = proto.join,
         _bind = Function.prototype.bind;
 
+    var polyfill = {
+        CustomEvent: function(event, param){
+            var ev = document.createEvent('CustomEvent');
+            param = param || {
+                bubbles: false,
+                cancalable: false,
+                detail: undefined
+            };
+            ev.initCustomEvent(event, param.bubbles, param.cancalable, param.detail);
+            return ev;
+        }
+    }
+
     var error = {
         noArgs: function(name){
             return new TypeError(util.method(name) + ' is called without argument.');
@@ -16,7 +29,7 @@
         insufficientArgs: function(name, needed, given){
             return new TypeError(util.method(name) + ' is called with insufficient arguments.' + needed + ' is needed, only ' + given + ' given.');
         },
-        invalidArgs: function(name, value, index){
+        invalidArgs: function(name){
             return new TypeError(util.method(name) + ' is supplied with invalid argument(s).');
         },
         chained: function(name){
@@ -202,9 +215,32 @@
             inst.length = i;
 
             return inst;
+        },
+
+        bindApply: function(){
+            var len,
+                i = 0,
+                item = this === InJ ? arguments[i++] : this.prev,
+                func = arguments[i++],
+                bind = arguments[i++],
+                apply = InJ.toArray(arguments[i]);
+
+            // First loop to bind know length of arguments
+            i = 0;
+            len = bind.length;
+            for (; i < len;)
+                func = func.bind(item, bind[i++]);
+
+            // Second loop to apply following unpredictable length of arguments
+            i = 0;
+            len = item ? item.length || 1 : 1;
+            for (; i < len; i++)
+                func.apply(item ? item[i] || item : item, apply);
+
+            return this;
         }
 
-    })
+    });
 
 
     // UTILITY METHODS
@@ -476,7 +512,7 @@
                 throw error.empty('constructorOf');
 
             if (subject === undefined || subject === null)
-                return undefined;
+                return null;
 
             return subject.constructor;
         },
@@ -486,13 +522,14 @@
                 val,
                 ret,
                 i = 0,
-                item = this === InJ ? arguments[i++] : this;
+                item = this === InJ ? arguments[i++] : this,
+                flatten = arguments[i];
 
             /* Use long if-elseif-else to sequentially eliminate possibilities */
             /* Sequence must remain for it to work properly */
             /* Do not alter the sequence */
 
-            if (arguments.length < 1)
+            if (item !== this && arguments.length < 1)
                 ret = [];
 
             else if (isUnparsable())
@@ -516,7 +553,9 @@
             else
                 throw error.unexpected('toArray', arguments);
 
-            return ret;
+            return flatten === true
+                ? InJ.flatten(ret, true)
+                : ret;
 
             function populate(){
                 i = item.length;
@@ -546,7 +585,49 @@
                 var c = item.constructor;
                 return c === HTMLSelectElement || c === HTMLFormElement
             }
-        }
+        },
+
+        flatten: function(){
+            var i = 0,
+                prev = this === InJ ? arguments[i++] : this,
+                toArray = arguments[i],
+                list = InJ.toArray(prev),
+                len = list.length,
+                result = [],
+                flatten = function(val){
+                    var x, l;
+
+                    // Only runs on array-like object except String, HTMLSelectElement and HTMLFormElement
+                    if (InJ.isArrayLike(val) && val.constructor !== String && val.constructor !== HTMLSelectElement && val.constructor !== HTMLFormElement)
+                        for (x = 0, l = val.length; x < l; x++)
+                            flatten(val[x]);
+                    else
+                        result.push(val);
+                };
+
+            for (i = 0; i < len; i++)
+                flatten(list[i]);
+
+            return toArray === true
+                ? result
+                : util.noAffectOriginal(result, prev);
+        },
+
+        loop: function(){
+            var i = 0,
+                len = arguments[i++],
+                callback = arguments[i++],
+                ctx = arguments[i],
+                result = [];
+
+            if (this !== InJ)
+                throw error.chained('loop');
+
+            for (i = 0; i < len; i++)
+                result[i] = callback.call(ctx, i);
+
+            return InJ(result);
+        },
 
     });
 
@@ -998,6 +1079,1267 @@
                 store = method.call(ctx, store, list[i], i, list);
 
             return store;
+        }
+
+    });
+
+
+    // InJ METHODS FOR DOM
+    InJ.define({
+
+        ready: function(){
+            var i = 0,
+                elem = document,
+                callback = arguments[i++],
+                args = _slice.call(arguments, i);
+
+            if (typeof callback !== 'function')
+                throw error.invalidArgs('ready');
+
+            // To supply `elem` as `this` to `callback`
+            args.unshift(elem);
+
+            callback = callback.bind.apply(callback, args);
+
+            if (elem.readyState !== 'loading')
+                callback();
+            else
+                InJ.once(elem, 'DOMContentLoaded', callback);
+
+            return util.noReturn(this, elem);
+        },
+
+        once: function(){
+            var el,
+                action,
+                remove,
+                args,
+                x,
+                i = 0,
+                elem = this === InJ ? InJ.toArray(arguments[i++], true) : this,
+                event = InJ.toArray(arguments[i++], true),
+                callback = arguments[i++],
+                options = _slice.call(arguments, i),
+                l = event.length;
+
+            for (i = elem.length; i--;){
+                el = elem[i];
+                for (x = l; x--;){
+                    action = event[x];
+
+                    // To remove event listener after `callback` is called
+                    remove = function(e){
+                        callback(e);
+                        InJ.bindApply(el, el.removeEventListener, args, options);
+                    };
+                    args = [action, remove];
+
+                    InJ.bindApply(el, el.addEventListener, args, options);
+                }
+            }
+
+            return util.noReturn(this, elem);
+        },
+
+        on: function(){
+            var l,
+                action,
+                x,
+                elem = this === InJ ? InJ.toArray(arguments[i++], true) : this,
+                event = InJ.toArray(arguments[i++], true),
+                callback = arguments[i++],
+                options = _slice.call(arguments, i),
+                l = event.length;
+
+            for (i = elem.length; i--;)
+                for (x = l; x--;)
+                    InJ.bindApply(elem[i], elem[i].addEventListener, [event[x], calback], options);
+
+            return util.noReturn(this, elem);
+        },
+
+        off: function(){
+            var l,
+                action,
+                x,
+                elem = this === InJ ? InJ.toArray(arguments[i++], true) : this,
+                event = InJ.toArray(arguments[i++], true),
+                callback = arguments[i++],
+                options = _slice.call(arguments, i),
+                l = event.length;
+
+            for (i = elem.length; i--;)
+                for (x = l; x--;)
+                    InJ.bindApply(elem[i], elem[i].removeEventListener, [event[x], calback], options);
+
+            return util.noReturn(this, elem);
+        },
+
+        dispatch: function(){
+            var CustomEvent,
+                init,
+                x,
+                i = 0,
+                elem = this === InJ ? InJ.toArray(arguments[i++], true) : this,
+                event = InJ.toArray(arguments[i++], true),
+                options = _slice.call(arguments, i),
+                len = elem.length,
+                l = event.length;
+
+            if (InJ.isObject(options[0]))
+                init = options[0];
+            else
+                init = {
+                    bubbles: options[0] || undefined,
+                    cancalable: options[1] || undefined,
+                    composed: options[2] || undefined,
+                    scoped: options[2] || undefined
+                };
+
+            CustomEvent = typeof window.CustomEvent !== 'function'
+                ? polyfill.CustomEvent
+                : window.CustomEvent;
+
+            for (i = 0; i < len; i++)
+                for (x = 0; x < l; x++)
+                    // CustomEvent also works with native Event types
+                    elem[i].dispatchEvent(new CustomEvent(event[x], init));
+
+            return util.noReturn(this, elem);
+        },
+
+        select: function(){
+            var list,
+                x,
+                l,
+                i = 0,
+                prev = this === InJ
+                    ? !InJ.isDOMContent(arguments[i]) && !(arguments[i] instanceof InJ.init)
+                        ? document      // Defaults to `document` if no anchor is provided
+                        : arguments[i++]
+                    : this,
+                elem = this === InJ ? InJ.toArray(prev, true) : this,
+                selector = arguments[i],
+                len = elem.length,
+                result = [];
+
+            for (i = 0; i < len; i++){
+                list = elem[i].querySelectorAll(selector);
+                l = list.length;
+                for (x = 0; x < l; x++)
+                    // Prevent duplicate
+                    if (result.indexOf(list[x]) < 0)
+                        result.push(list[x]);
+            }
+
+            return util.noAffectOriginal(result, prev);
+        },
+
+        byId: function(){
+            var result, args, i;
+
+            if ((this instanceof InJ.init) && !$.isEmpty(this))
+                throw error.chained('byId');
+
+            // Handle any type of arguments for the for-loop below
+            args = InJ.toArray(arguments, true);
+            result = [];
+            i = args.length;
+
+            for (; i--;)
+                result[i] = document.getElementById(args[i]);
+
+            return util.noAffectOriginal(result, document);
+        },
+
+        byClass: function(){
+            var list,
+                x,
+                g,
+                n,
+                cls,
+                i = 0,
+                prev = this === InJ
+                    ? !InJ.isDOMContent(arguments[i]) && !(arguments[i] instanceof InJ.init)
+                        ? document      // Defaults to `document` if no anchor is provided
+                        : arguments[i++]
+                    : this,
+                elem = this === InJ ? InJ.toArray(prev, true) : this,
+                className = _slice.call(arguments, i),
+                len = elem.length,
+                l = className.length,
+                result = [];
+
+            for (i = 0; i < len; i++){
+                for (x = 0; x < l; x++){
+                    cls = className[x];
+
+                    if (typeof cls !== 'string')
+                        continue;
+
+                    list = elem[i].getElementsByClassName(cls);
+                    g = list.length;
+
+                    for (n = 0; n < g; n++)
+                        //Prevent duplication
+                        if (result.indexOf(list[n]) < 0)
+                            result.push(list[n]);
+                }
+            }
+
+            return util.noAffectOriginal(result, prev);
+        },
+
+        byTag: function(){
+            var list,
+                x,
+                g,
+                n,
+                tag,
+                i = 0,
+                prev = this === InJ
+                       ? !InJ.isDOMContent(arguments[i]) && !(arguments[i] instanceof InJ.init)
+                         ? document         // Defaults to `document` if no anchor is provided
+                         : arguments[i++]
+                       : this,
+                elem = this === InJ ? InJ.toArray(prev, true) : this,
+                tagName = _slice.call(arguments, i),
+                len = elem.length,
+                l = tagName.length,
+                result = [];
+                
+            for (i = 0; i < len; i++){
+
+                for (x = 0; x < l; x++){
+
+                    tag = tagName[x];
+
+                    if (typeof tag !== 'string')
+                        continue;
+
+                    list = elem[i].getElementsByTagName(tag);
+                    g = list.length;
+
+                    for (n = 0; n < g; n++)
+                        // Prevent duplication
+                        if (result.indexOf(list[n]) < 0)
+                            result.push(list[n]);
+
+                }
+
+            }
+
+            return util.noAffectOriginal(result, prev);
+        },
+
+        byName: function(){
+            var list,
+                x,
+                g,
+                n,
+                nm,
+                i = 0,
+                prev = this === InJ
+                       ? !InJ.isDOMContent(arguments[i]) && !(arguments[i] instanceof InJ.init)
+                         ? document         // Defaults to `document` if no anchor is provided
+                         : arguments[i++]
+                       : this,
+                elem = this === InJ ? InJ.toArray(prev, true) : this,
+                name = _slice.call(arguments, i),
+                len = elem.length,
+                l = name.length,
+                result = [];
+                
+            for (i = 0; i < len; i++){
+
+                for (x = 0; x < l; x++){
+
+                    nm = name[x];
+
+                    if (typeof nm !== 'string')
+                        continue;
+
+                    list = elem[i].getElementsByName(nm);
+                    g = list.length;
+
+                    for (n = 0; n < g; n++)
+                        // Prevent duplication
+                        if (result.indexOf(list[n]) < 0)
+                            result.push(list[n]);
+
+                }
+
+            }
+
+            return util.noAffectOriginal(result, prev);
+        },
+
+        setAttr: function(){
+            var el,
+                x,
+                l,
+                elem = this === InJ ? InJ.toArray(arguments[i++], true) : this,
+                attr = arguments[i++],
+                val = arguments[i++];
+
+            i = elem.length;
+
+            switch (InJ.constructorOf(attr)){
+                case String:
+                    for (; i--;)
+                        elem[i].setAttribute(attr, val);
+                    break;
+
+                case Object:
+                    for (; i--;){
+                        el = elem[i];
+                        for (x in attr)
+                            el.setAttribute(x, attr[x]);
+                    }
+                    break;
+
+                case Array:
+                    for (l = attr.length; i--;){
+                        el = elem[i];
+                        for (x = l; x--;)
+                            el.setAttribute(attr[x], val[x]);
+                    }
+                    break;
+
+                default:
+                    throw error.invalidArgs('setAttr');
+            }
+
+            return util.noReturn(this, elem);
+        },
+
+        removeAttr: function(){
+            var x,
+                l,
+                elem = this === InJ ? InJ.toArray(arguments[i++], true) : this,
+                attr = _slice.call(arguments, i);
+
+            attr = InJ.flatten(attr, true);
+            l = attr.length;
+            i = elem.length;
+
+            for (; i--;)
+                for (x = l; x--;)
+                    elem[i].removeAttribute(attr[x]);
+
+            return util.noReturn(this, elem);
+        },
+
+        getAttr: function(){
+            var i = 0,
+                prev = this === InJ ? arguments[i++] : this,
+                elem = this === InJ ? InJ.toArray(prev, true) : this,
+                attr = arguments[i],
+                result = [];
+
+            for (i = elem.length; i--;)
+                result[i] = elem[i].getAttribute(attr);
+
+            return util.noAffectOriginal(result, prev);
+        },
+
+        hasAttr: function(){
+            var x,
+                val,
+                i = 0,
+                elem = this === InJ ? InJ.toArray(arguments[i++], true) : this,
+                attr = _slice.call(arguments, i),
+                l = attr.length;
+
+            i = elem.length;
+
+            if (!i)
+                return false;
+
+            for (; i--;)
+                for (x = l; x--;)
+                    // If any `elem` is lacking any `attr`, return false right away
+                    if (elem[i].getAttribute(attr[x]) === null)
+                        return false;
+
+            return true;
+        },
+
+        addClass: function(){
+            var el,
+                className,
+                cls,
+                x,
+                ind,
+                i = 0,
+                elem = this === InJ ? InJ.toArray(arguments[i++], true) : this,
+                classes = InJ.flatten(_slice.call(arguments, i), true);
+
+            className = classes.join(' ');
+
+            for (i = elem.length; i--;){
+                el = elem[i];
+
+                // Retrieves existing classes
+                cls = el.getAttribute('class');
+                cls = cls ? cls + ' ' : '';
+
+                // Adds new classes to existing classes
+                cls += className;
+
+                // Removes duplicating classes
+                cls = cls.split(' ');
+                for (x = cls.length; x--;){
+                    // Get the index of the first occurrance
+                    ind = cls.indexOf(cls[x]);
+
+                    // Get the index of the next occurrance
+                    ind = cls.indexOf(cls[x], ind + 1);
+
+                    // If there is a next occurrance, remove it
+                    if (ind >= 0)
+                        cls.splice(ind, 1);
+                }
+                cls = cls.join(' ');
+
+                el.setAttribute('class', cls);
+            }
+
+            return util.noReturn(this, elem);
+        },
+
+        removeClass: function(){
+            var x,
+                l,
+                el,
+                regexp,
+                i = 0,
+                elem = this === InJ ? InJ.toArray(arguments[i++], true) : this,
+                className = InJ.flatten(_slice.call(arguments, i), true),
+                l = className.length;
+
+            i = elem.length;
+
+            if (elem[i - 1].classList){
+
+                for (; i--;){
+                    el = elem[i];
+                    for (x = 0; x < l; x++)
+                        el.classList.remove(className[x]);
+                }
+
+            } else {
+
+                // Dynamic RegExp from `className`
+                regexp = new RegExp('(^|\\b)' + className.join('|') + '(\\b|$)', 'gi');
+                for (; i--;){
+                    el = elem[i];
+                    el.className = el.className.replace(regexp, ' ');
+                }
+
+            }
+
+            return util.noReturn(this, elem);
+        },
+
+        toggleClass: function(){
+            var el,
+                elCls,
+                cls,
+                x,
+                elem = this === InJ ? InJ.toArray(arguments[i++], true) : this,
+                className = InJ.flatten(_slice.call(arguments, i), true),
+                l = className.length;
+
+            for (i = elem.length; i--;){
+
+                el = elem[i];
+                elCls = el.className.split(' ');
+
+                for (x = 0; x < l; x++){
+
+                    cls = className[x];
+
+                    if (elCls.indexOf(cls) >= 0)
+                        InJ.removeClass(el, cls);
+                    else
+                        InJ.addClass(el, cls);
+
+                }
+
+            }
+
+            return util.noReturn(this, elem);
+        },
+
+        hasClass: function(){
+            var x,
+                el,
+                elCls,
+                i = 0,
+                elem = this === InJ ? InJ.toArray(arguments[i++], true) : this,
+                className = InJ.flatten(_slice.call(arguments, i), true),
+                l = className.length;
+
+            i = elem.length;
+
+            if (!i)
+                return false;
+
+            for (; i--;){
+                el = elem[i];
+                elCls = InJ.toArray(el.classList || el.className, true);
+
+                for (x = l; x--;)
+                    // If any `className` is absent in any `elem`, returns false right away
+                    if (elCls.indexOf(className[x]) < 0)
+                        return false;
+            }
+
+            return true;
+        },
+
+        create: function(){
+            var i = 0,
+                elem = arguments[i++],
+                number = $.isNOU(arguments[i]) ? i : arguments[i],
+                created = [];
+
+            if ((this instanceof InJ.init) && this.length > 0)
+                throw error.chained('create');
+
+            if (typeof elem !== 'string' || (typeof number !== 'number' || number < 1))
+                throw error.invalidArgs('create');
+
+            for (i = number; i--;)
+                created[i] = document.createElement(elem);
+
+            return InJ(created);
+        },
+
+        clone: function(){
+            var clone = [],
+                i = 0,
+                elem = this === InJ ? InJ.toArray(arguments[i++], true) : this,
+                deep = arguments[i] || false,
+                len = elem.length;
+
+            // If `elem` is not array-like
+            if (!len)
+                clone[i] = elem.cloneNode(deep);
+            else
+                for (; i < len; i++)
+                    clone[i] = elem[i].cloneNode(deep);
+
+            return util.noAffectOriginal(clone, elem);
+        },
+
+        // PARENT.append(CHILDREN)
+        append: function(){
+            var len,
+                x,
+                i = 0,
+                parent = this === InJ ? InJ.toArray(arguments[i++], true) : this,
+                children = InJ.flatten(_slice.call(arguments, i), true),
+                fragment = document.createDocumentFragment(),
+                len = parent.length,
+                l = children.length;
+
+            // Append child elements to fragment
+            for (x = 0; x < l; x++)
+                fragment.appendChild(children[x]);
+
+            // Append fragment to parents
+            for (i = 0; i < len; i++){
+                /**
+                 * If is not last iteration
+                 *  append the cloned `fragment`
+                 * else
+                 *  append the `fragment`
+                 */
+                parent[i].appendChild(
+                    len !== (i + 1)
+                        ? fragment.cloneNode(true)
+                        : fragment
+                );
+            }
+
+            return util.noReturn(this, parent);
+        },
+
+        // CHILDREN.appendTo(PARENT)
+        appendTo: function(){
+            var x,
+                i = 0,
+                children = this === InJ ? InJ.toArray(arguments[i++], true) : this,
+                parent = InJ.flatten(_slice.call(arguments, i), true),
+                fragment = document.createDocumentFragment(),
+                len = parent.length,
+                l = children.length;
+
+            for (i = 0; i < len; i++){
+
+                for (x = 0; x < l; x++){
+                    /**
+                     * If is not last iteration
+                     *  append cloned `children` to `fragment`
+                     * else
+                     *  append `children` to `fragment`
+                     */
+                    fragment.appendChild(
+                        len !== (i + 1)
+                            ? children[x].cloneNode(true)
+                            : children[x]
+                    );
+                }
+
+                parent[i].appendChild(fragment);
+
+            }
+
+            return util.noReturn(this, children);
+        },
+
+        // PARENT.prepend(CHILDREN)
+        prepend: function(){
+            var x,
+                par,
+                i = 0,
+                parent = this === InJ ? InJ.toArray(arguments[i++], true) : this,
+                children = InJ.flatten(_slice.call(arguments, i), true),
+                fragment = docment.createDocumentFragment(),
+                len = parent.length,
+                l = children.length;
+
+            // Append child elements to `fragment`
+            for (x = 0; x < l; x++)
+                fragment.appendChild(children[x]);
+
+            // Append fragment to parents
+            for (i = 0; i < len; i++){
+                par = parent[i];
+
+                /**
+                 * If is not last iteration
+                 *  prepend the cloend `fragment`
+                 * else
+                 *  prepend the `fragment`
+                 */
+                par.insertBefore(
+                    len !== (i + 1) ? fragment.cloneNode(true) : fragment,
+                    par.children[0]
+                )
+            }
+
+            return util.noReturn(this, parent);
+        },
+
+        // CHILDREN.prependTo(PARENT)
+        prependTo: function(){
+            var x,
+                par,
+                i = 0,
+                children = this === InJ ? InJ.toArray(arguments[i++], true) : this,
+                parent = InJ.flatten(_slice.call(arguments, i), true),
+                fragment = document.createDocumentFragment(),
+                len = parent.length,
+                l = children.length;
+
+            for (i = 0; i < len; i++){
+                par = parent[i];
+
+                for (x = 0; x < l; x++){
+                    /**
+                     * If is not last iteration
+                     *  prepend cloned `children` to `fragment
+                     * else
+                     *  prepend `children` to `fragment`
+                     */
+                    fragment.appendChild(
+                        len !== (i + 1)
+                            ? children[x].cloneNode(true)
+                            : children[x]
+                    );
+                }
+
+                par.insertBefore(fragment, par.children[0]);
+            }
+
+            return util.noReturn(this, children);
+        },
+
+        // PARENT.insert(CHILDREN, afterThisIndex)
+        insert: function(){
+            var siblings,
+                x,
+                l,
+                par,
+                i = 0,
+                parent = this === InJ ? InJ.toArray(arguments[i++], true) : this,
+                children = InJ.toArray(arguments[i++], true),
+                index = arguments[i],
+                len = parent.length,
+                l = children.length,
+                fragment = document.createDocumentFragment();
+
+            // Append `children` to `fragment`
+            for (x = 0; x < l; x++)
+                fragment.appendChild(children[x]);
+
+            for (i = 0; i < len; i++){
+                par = parent[i];
+                siblings = par.children;
+
+                /**
+                 * If is not last iteration
+                 *  insert the cloned `fragment`
+                 * else
+                 *  insert the `fragment`
+                 */
+                par.insertBefore(
+                    len !== (i + 1) ? fragment.cloneNode(true) : fragment,
+                    siblings[index + 1]
+                )
+            }
+
+            return util.noReturn(this, parent);
+        },
+
+        // PARENT.insert(CHILDREN, beforeThisIndex)
+        insertBefore: function(){
+            var siblings,
+                x,
+                l,
+                par,
+                i = 0,
+                parent = this === InJ ? InJ.toArray(arguments[i++], true) : this,
+                children = InJ.toArray(arguments[i++], true),
+                index = arguments[i],
+                l = children.length,
+                fragment = document.createDocumentFragment();
+
+            // Append `children` to `fragment`
+            for (x = 0; x < l; x++)
+                fragment.appendChild(children[x]);
+
+            for (i = parent.length; i--;){
+                par = parent[i];
+                siblings = par.children;
+
+                /**
+                 * If is not last iteration
+                 *  insert the cloned `fragment`
+                 * else
+                 *  insert the `fragment`
+                 */
+                par.insertBefore(
+                    len !== (i + 1) ? fragment.cloneNode(true) : fragment,
+                    siblings[index]
+                );
+            }
+
+            return util.noReturn(this, parent);
+        },
+
+        remove: function(){
+            var i,
+                trash = this === InJ ? InJ.toArray(arguments[0], true) : this,
+                bin = [];
+
+            // Collect removed items into bin
+            for (i = trash.length; i--;)
+                bin[i] = trash[i].parentElement.removeChild(trash[i]);
+
+            // Returns removed items
+            return util.noAffectOriginal(bin, trash);
+        },
+
+        empty: function(){
+            var x,
+                par,
+                child,
+                i = 0,
+                parent = this === InJ ? InJ.toArray(arguments[0], true) : this;
+
+            for (i = parent.length; i--;){
+                par = parent[i];
+                child = par.children;
+
+                // Removes all children from `parent`
+                for(x = child.length; x--;)
+                    par.removeChild(child[x]);
+            }
+
+            // Returns `parent`
+            return util.noReturn(this, parent);
+        },
+
+        css: function(){
+            var el,
+                len,
+                key,
+                i = 0,
+                elem = this === InJ ? InJ.toArray(arguments[i++], true) : this,
+                prop = arguments[i++],
+                val = arguments[i],
+                obj = {};
+
+            // Turns settings into object
+            switch (InJ.constructorOf(prop)){
+                case Object:
+                    obj = prop;
+                    break;
+
+                case String:
+                    obj[prop] = val;
+                    break;
+
+                case Array:
+                    len = prop.length;
+                    for (i = 0; i < len; i++)
+                        obj[prop[i]] = val[i];
+                    break;
+
+                default:
+                    throw invalidArgs('css');
+            }
+
+            // Set style
+            for (i = elem.length; i--;){
+                el = elem[i];
+                for (key in obj)
+                    el.style[key] = obj[key];
+            }
+
+            return util.noReturn(this, elem);
+        },
+
+        html: function(){
+            var html,
+                prev,
+                elem,
+                string,
+                len,
+                i = 0;
+
+            if (this === InJ){
+                prev = arguments[i++];
+                elem = InJ.toArray(prev, true);
+            } else {
+                prev = this;
+                elem = this;
+            }
+
+            string = String(arguments[i]);
+            len = elem.length;
+
+            /**
+             * If value is not provided in argument
+             *  get elem's innerHTML
+             * else
+             *  set elem's innerHTML
+             */
+            if (arguments.length === i){
+
+                html = [];
+
+                for (i = 0; i < len; i++)
+                    html[i] = elem[i].innerHTML;
+
+                return util.noAffectOriginal(html, prev);
+
+            }
+
+            for (i = 0; i < len; i++)
+                elem[i].innerHTML = string;
+
+            return util.noReturn(this, elem);
+        },
+
+        text: function(){
+            var text,
+                prev,
+                elem,
+                string,
+                len,
+                i = 0;
+
+            if (this === InJ){
+                prev = arguments[i++];
+                elem = InJ.toArray(prev, true);
+            } else {
+                prev = this;
+                elem = this;
+            }
+
+            string = String(arguments[i]);
+            len = elem.length;
+
+            /**
+             * If value is not provided in argument
+             *  get elem's innerText
+             * else
+             *  set elem's innerText
+             */
+            if (arguments.length === i){
+
+                text = [];
+
+                for (i = 0; i < len; i++)
+                    text[i] = elem[i].innerText;
+
+                return util.noAffectOriginal(text, prev);
+
+            }
+
+            for (i = 0; i < len; i++)
+                elem[i].innerText = string;
+
+            return util.noReturn(this, elem);
+        },
+
+        previous: function(){
+            var sib,
+                prev,
+                elem,
+                len,
+                i = 0,
+                result = [];
+
+            if (this === InJ){
+                prev = arguments[i];
+                elem = InJ.toArray(prev, true);
+            } else {
+                prev = this;
+                elem = this;
+            }
+
+            for (len = elem.length; i < len; i++)
+                // Only push to `result` if there is a previous sibling
+                if (sib = elem[i].previousElementSibling)
+                    // Prevent duplication
+                    if (result.indexOf(sib) < 0)
+                        result.push(sib);
+
+            return util.noAffectOriginal(result, prev);
+        },
+
+        next: function(){
+            var sib,
+                prev,
+                elem,
+                len,
+                i = 0,
+                result = [];
+
+            if (this === InJ){
+                prev = arguments[i];
+                elem = InJ.toArray(prev, true);
+            } else {
+                prev = this;
+                elem = this;
+            }
+
+            for (len = elem.length; i < len; i++)
+                // Only push to `result` if there is a next sibling
+                if (sib = elem[i].nextElementSibling)
+                    // Prevent duplication
+                    if (result.indexOf(sib) < 0)
+                        result.push(sib);
+
+            return util.noAffectOriginal(result, prev);
+        },
+
+        parent: function(){
+            var par,
+                prev,
+                elem,
+                len,
+                i = 0,
+                result = [];
+
+            if (this === InJ){
+                prev = arguments[i];
+                elem = InJ.toArray(prev, true);
+            } else {
+                prev = this;
+                elem = this;
+            }
+
+            for (len = elem.length; i < len; i++)
+                // Only push to `result` if there is a parent
+                if (par = elem[i].parentElement)
+                    // Prevent duplication
+                    if (result.indexOf(par) < 0)
+                        result.push(par);
+
+            return util.noAffectOriginal(result, prev);
+        },
+
+        children: function(){
+            var x,
+                l,
+                child,
+                prev,
+                elem,
+                len,
+                i = 0,
+                result = [];
+
+            if (this === InJ){
+                prev = arguments[i++];
+                elem = this;
+            } else {
+                prev = this;
+                elem = this;
+            }
+
+            for (i = 0, len = elem.length; i < len; i++){
+                child = elem[i].children;
+                l = child.length;
+
+                // Push children of each `elem` to `result`
+                for (x = 0; x < l; x++)
+                    // Prevent duplication
+                    if (result.indexOf(child[x]) < 0)
+                        result.push(child[x]);
+            }
+
+            return util.noAffectOriginal(result, prev);
+        },
+
+        siblings: function(){
+            var prev,
+                elem,
+                inclusive,
+                len,
+                i = 0,
+                result = [];
+
+            if (this === InJ){
+                prev = arguments[i++];
+                elem = InJ.toArray(prev, true);
+            } else {
+                prev = this;
+                elem = this;
+            }
+
+            inclusive = arguments[i];
+            len = elem.length;
+
+            for (i = 0; i < len; i++){
+                // Turns children into array so that it can be spliced
+                result[i] = InJ.toArray(elem[i].parentElement.children);
+
+                // Removes `elem` from `result` if is not inclusive
+                if (inclusive !== true)
+                    result[i].splice(result[i].indexOf(elem[i]), 1);
+            }
+            
+            // Deduplication
+            result = result.filter(function(v, i, a){
+                return a.indexOf(v) === i;
+            });
+
+            return util.noAffectOriginal(result, prev);
+        },
+
+        hasChildren: function(){
+            var elem = this === InJ ? InJ.toArray(arguments[0], true) : this,
+                i = elem.length;
+
+            for (; i--;)
+                if (elem[i].children.length > 1)
+                    return true;
+
+            return false;
+        },
+
+        hasSiblings: function(){
+            var elem = this === InJ ? InJ.toArray(arguments[0], true) : this,
+                i = elem.length;
+
+            for (; i--;)
+                if (elem[i].parentElement.children.length > 1)
+                    return true;
+
+            return false;
+        },
+
+        ancestors: function(){
+            var parent,
+                ancestors,
+                x,
+                l,
+                prev,
+                elem,
+                until,
+                len,
+                i = 0,
+                result = [];
+
+            if (this === InJ){
+                prev = arguments[i++];
+                elem = InJ.toArray(prev, true);
+            } else {
+                prev = this;
+                elem = this;
+            }
+
+            until = arguments[i] || document.body.parentElement;
+            len = elem.length;
+
+            if (typeof until === 'number')
+                (function loop(elem, count){
+
+                    var par,
+                        parent = [],
+                        len = elem.length,
+                        i = 0;
+
+                    for (; i < len; i++){
+
+                        // Skip the loop if `elem[i]` has no parent
+                        if (!(par = elem[i].parentElement))
+                            continue;
+
+                        // Record parent
+                        parent.push(par);
+
+                        // Prevent duplication
+                        if (result.indexOf(par) < 0)
+                            result.push(par);
+
+                    }
+
+                    // If count > 0 && parent.length > 0, continue the loop
+                    if (count > 0 && parent.length > 0)
+                        return loop(parent, --count);
+
+                })(elem, --until);
+            else
+                (function traverse(elem, until){
+
+                    var par,
+                        parent = [],
+                        len = elem.length,
+                        i = 0;
+
+                    for (; i < len; i++){
+
+                        // Break the loop if the traversion reaches `until`
+                        if (elem[i] === until)
+                            break;
+
+                        // Skip the loop if `elem[i]` has no parent
+                        if (!(par = elem[i].parentElement))
+                            continue;
+
+                        // Record parent
+                        parent.push(par);
+
+                        // Prevent duplication of result
+                        if (result.indexOf(par) < 0)
+                            result.push(par);
+                    }
+
+                    // If there are recorded parents, traverse the parents
+                    if (parent.length > 0)
+                        return traverse(parent, until);
+
+                })(elem, until);
+
+            return util.noAffectOriginal(result, prev);
+        },
+
+        descendants: function(){
+            var prev,
+                elem,
+                until,
+                len,
+                i = 0,
+                result = [];
+
+            if (this === InJ){
+                prev = arguments[i++];
+                elem = InJ.toArray(prev, true);
+            } else {
+                prev = this;
+                elem = this;
+            }
+
+            until = arguments[i];
+            len = elem.length;
+
+            for (i = len; i--;)
+                // Get all child eements of elem[i]
+                result.push(elem[i].getElementsByTagName('*'));
+
+            result = InJ.flatten(result, true);
+
+            if (until && InJ.includes(result, until))
+                // Removes the chuck of elements after the `until` limiter
+                result.splice(result.indexOf(until));
+
+            return util.noAffectOriginal(result, prev);
+        },
+
+        checked: function(){
+            var b,
+                prev,
+                box,
+                len,
+                i = 0,
+                result = [];
+
+            if (this === InJ){
+                prev = arguments[i];
+                box = InJ.toArray(prev, true);
+            } else {
+                prev = this;
+                box = this;
+            }
+
+            for (len = box.length; i < len; i++){
+                b = box[i];
+                if (b.checked === true && result.indexOf(b) < 0)
+                    result.push(b);
+            }
+
+            return util.noAffectOriginal(result, prev);
+        },
+
+        isChecked: function(){
+            var el,
+                type,
+                i = 0,
+                box = this === InJ ? InJ.toArray(arguments[i], true) : this,
+                result = [];
+
+            i = box.length;
+
+            if (!i)
+                throw error.empty('isChecked');
+
+            for (i = box.length; i--;){
+                el = box[i];
+
+                // Check if `el` is <input>
+                if ($.constructorOf(el) !== HTMLInputElement)
+                    throw error.invalidArgs('isChecked');
+
+                type = el.getAttribute('type');
+
+                // Check if `el` is <input type="checkbox|radio">
+                if (type !== 'checkbox' && type !== 'radio')
+                    throw error.invalidArgs('isChecked');
+
+                result[i] = el.checked;
+            }
+
+            return result.length === 1
+                ? result[0]
+                : !InJ.includes(result, false);
         }
 
     });
