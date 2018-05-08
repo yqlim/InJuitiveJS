@@ -627,7 +627,7 @@
                 result[i] = callback.call(ctx, i);
 
             return InJ(result);
-        },
+        }
 
     });
 
@@ -2340,6 +2340,218 @@
             return result.length === 1
                 ? result[0]
                 : !InJ.includes(result, false);
+        },
+
+        ajax: function(){
+            var ajax = new XMLHttpRequest(),
+                defaults = {
+                    type: 'POST',
+                    url: '',
+                    data: {},
+                    success: function(){},
+                    fail: function(){},
+                    mime: 'application/x-www-form-urlencoded',
+                    charset: 'UTF-8',
+                    async: true
+                },
+                parse = function(s){
+                    // If is object, parse
+                    return /^(\u007b)(((.)+(\u007d)$)|(\u007d)$)/g.test(s)
+                        ? JSON.parse(s)
+                        : s;
+                },
+                querify = function(obj){
+                    var val,
+                        key,
+                        qs = '';
+
+                    for (key in obj){
+                        if(obj.hasOwnProperty(key)){
+                            val = obj[key];
+
+                            // urlencode if is not string
+                            if (!InJ.isString(val))
+                                val = encodeURIComponent(JSON.stringify(val));
+
+                            if (!qs)
+                                qs = key + '=' + val;
+                            else
+                                qs += '&' + key + '=' + val;
+                        }
+                    }
+
+                    return qs;
+                },
+                config = InJ.extend({}, defaults, arguments[0]);
+
+            if (!$.isObject(arguments[0]))
+                throw error.invalidArgs('ajax');
+
+            config.type = config.type.toUpperCase();
+            config.charset = config.charset.toUpperCase();
+
+            // Querify data if needed
+            if (typeof config.data !== 'string' && (config.type === 'GET' || config.mime === 'application/x-www-form-urlencoded')){
+                config.data = querify(config.data);
+                if (config.type === 'GET' || config.type === 'DELETE')
+                    config.url += (/\u003F(\S){1,}\u003D(\S){1,}/ig.test(config.url) ? '&' : '?') + config.data;
+            }
+
+            ajax.addEventListener('readystatechange', function(){
+                if (this.readyState !== 4) return;
+                if (this.status === 200)
+                    config.success(parse(this.response), this.status, this.statusText);
+                else
+                    config.fail(parse(this.response), this.status, this.statusText);
+            });
+
+            ajax.open(config.type, config.url, config.async);
+            switch (config.type){
+                case 'GET':
+                    ajax.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded; charset=' + config.charset);
+                    ajax.send();
+                    break;
+                case 'POST':
+                case 'PUT':
+                    ajax.setRequestHeader('Content-Type', config.mime + '; charset=' + config.charset);
+                    ajax.send(config.data);
+                    break;
+                case 'DELETE':
+                    ajax.setRequestHeader('Content-Type', config.mime + '; charset=' + config.charset);
+                    ajax.send(typeof config.data === 'string' ? null : config.data);
+                    break;
+                default:
+                    throw new TypeError('Invalid HTTP request method: ' + config.type);
+            }
+
+            return ajax;
+        }
+
+    });
+
+
+    // InJ METHODS FOR OBJECT
+    InJ.define({
+
+        keys: function(){
+            var k,
+                obj,
+                i = 0,
+                list = this === InJ ? InJ.toArray(arguments) : this,
+                len = list.length,
+                result = [];
+
+            for (; i < len; i++){
+                obj = list[i];
+                for (k in obj)
+                    if (obj.hasOwnProperty(k))
+                        result.push(k);
+            }
+
+            return util.noAffectOriginal(result, list);
+        },
+
+        values: function(){
+            var k,
+                obj,
+                i = 0,
+                list = this === InJ ? InJ.toArray(arguments) : this,
+                len = list.length,
+                result = [];
+
+            for (; i < len; i++){
+                obj = list[i];
+                for (k in obj)
+                    if (obj.hasOwnProperty(k))
+                        result.push(obj[k]);
+            }
+
+            return util.noAffectOriginal(result, list);
+        },
+
+        entries: function(){
+            var k,
+                obj,
+                i = 0,
+                list = this === InJ ? InJ.toArray(arguments) : this,
+                len = list.length,
+                result = [];
+
+            for (; i < len; i++){
+                obj = list[i];
+                for (k in obj)
+                    if (obj.hasOwnProperty(k))
+                        result.push([k, obj[k]]);
+            }
+
+            return util.noAffectOriginal(result, list);
+        },
+
+        extend: function(){
+            var key,
+                target,
+                i = 0,
+                len = arguments.length;
+
+            if (!len)
+                throw error.empty('extend');
+
+            target = arguments[i++];
+
+            for (; i < len; i++)
+                for (key in arguments[i])
+                    // Shallow copy and overwrite key/value into target
+                    target[key] = arguments[i][key];
+
+            return target;
+        },
+
+        deepExtend: function(){
+            var key,
+                obj,
+                val,
+                i = 0,
+                result = arguments[i++],
+                len = arguments.length;
+
+            result = result = {};
+
+            for (; i < len; i++){
+                obj = arguments[i];
+                if (!obj)
+                    continue;
+
+                for (key in obj){
+                    if (!obj.hasOwnProperty(key))
+                        continue;
+
+                    switch (InJ.constructorOf(obj[key])){
+                        case Object:
+                            // Deep extend descending objects
+                            val = InJ.deepExtend(result[key], obj[key]);
+                            break;
+
+                        case Array:
+                        case InJ:
+                            // Deep copy arrays and InJ instance
+                            val = InJ.copy(obj[key]);
+                            break;
+
+                        default:
+                            if (InJ.isDOMContent(obj[key]))
+                                if (InJ.isArrayLike(obj[key]))
+                                    val = obj[key];
+                                else
+                                    val = obj[key].cloneNode(true);
+                            else
+                                val = obj[key];
+                    }
+
+                    result[key] = val;
+                }
+            }
+
+            return result;
         }
 
     });
