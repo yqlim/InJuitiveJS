@@ -177,7 +177,7 @@
     // BASIC INFO
     InJ.define({
         constructor: InJ,
-        version: '0.0.1'
+        version: '1.0.0'
     });
 
 
