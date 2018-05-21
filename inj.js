@@ -734,6 +734,56 @@
 
             }
 
+            return util.affectOriginal(this, result);
+        },
+
+        // Deep search the list for target
+        contains: function(){
+            var i = 0,
+                list = this === InJ ? InJ.toArray(arguments[i++], true) : this,
+                item = arguments[i++],
+                from = arguments[i] || 0,
+                len = list.length;
+
+            if (typeof from !== 'number')
+                throw error.invalidArgs('contains');
+
+            from = util.parseNegativeIndex(from, len);
+
+            for (i = from; i < len; i++)
+                if (list[i] === item)
+                    return true;
+
+            return false;
+        },
+
+        first: function(){
+            var i = 0,
+                prev = this === InJ ? arguments[i++] : this,
+                elem = InJ.toArray(prev),
+                result = elem[0];
+            return util.noAffectOriginal(result, prev);
+        },
+
+        last: function(){
+            var i = 0,
+                prev = this === InJ ? arguments[i++] : this,
+                elem = InJ.toArray(prev),
+                result = elem[elem.length - 1];
+            return util.noAffectOriginal(result, prev);
+        },
+
+        unique: function(){
+            var i = 0,
+                prev = this === InJ ? arguments[i] : this,
+                list = InJ.toArray(prev),
+                result = [],
+                len = list.length;
+
+            for (; i < len; i++)
+                if (list.indexOf(list[i]) === i)
+                    result.push(list[i]);
+
             return util.noAffectOriginal(result, prev);
         }
 
@@ -1145,6 +1195,7 @@
             var l,
                 action,
                 x,
+                i = 0,
                 elem = this === InJ ? InJ.toArray(arguments[i++], true) : this,
                 event = InJ.toArray(arguments[i++], true),
                 callback = arguments[i++],
@@ -1153,7 +1204,7 @@
 
             for (i = elem.length; i--;)
                 for (x = l; x--;)
-                    InJ.bindApply(elem[i], elem[i].addEventListener, [event[x], calback], options);
+                    InJ.bindApply(elem[i], elem[i].addEventListener, [event[x], callback], options);
 
             return util.noReturn(this, elem);
         },
@@ -1162,6 +1213,7 @@
             var l,
                 action,
                 x,
+                i = 0,
                 elem = this === InJ ? InJ.toArray(arguments[i++], true) : this,
                 event = InJ.toArray(arguments[i++], true),
                 callback = arguments[i++],
@@ -1170,7 +1222,7 @@
 
             for (i = elem.length; i--;)
                 for (x = l; x--;)
-                    InJ.bindApply(elem[i], elem[i].removeEventListener, [event[x], calback], options);
+                    InJ.bindApply(elem[i], elem[i].removeEventListener, [event[x], callback], options);
 
             return util.noReturn(this, elem);
         },
@@ -1275,7 +1327,7 @@
                     cls = className[x];
 
                     if (typeof cls !== 'string')
-                        continue;
+                        throw error.invalidArgs('byClass');
 
                     list = elem[i].getElementsByClassName(cls);
                     g = list.length;
@@ -1378,6 +1430,7 @@
             var el,
                 x,
                 l,
+                i = 0,
                 elem = this === InJ ? InJ.toArray(arguments[i++], true) : this,
                 attr = arguments[i++],
                 val = arguments[i++];
@@ -1416,6 +1469,7 @@
         removeAttr: function(){
             var x,
                 l,
+                i = 0,
                 elem = this === InJ ? InJ.toArray(arguments[i++], true) : this,
                 attr = _slice.call(arguments, i);
 
@@ -1547,6 +1601,7 @@
                 elCls,
                 cls,
                 x,
+                i = 0,
                 elem = this === InJ ? InJ.toArray(arguments[i++], true) : this,
                 className = InJ.flatten(_slice.call(arguments, i), true),
                 l = className.length;
@@ -2135,6 +2190,8 @@
                 if (inclusive !== true)
                     result[i].splice(result[i].indexOf(elem[i]), 1);
             }
+
+            result = InJ.flatten(result, true);
             
             // Deduplication
             result = result.filter(function(v, i, a){
@@ -2369,9 +2426,12 @@
                         if(obj.hasOwnProperty(key)){
                             val = obj[key];
 
-                            // urlencode if is not string
-                            if (!InJ.isString(val))
-                                val = encodeURIComponent(JSON.stringify(val));
+                            // Stringify if is not string
+                            if (!InJ.toString(val))
+                                val = JSON.stringify(val);
+                                
+                            val = encodeURIComponent(val);
+                            key = encodeURIComponent(key);
 
                             if (!qs)
                                 qs = key + '=' + val;
