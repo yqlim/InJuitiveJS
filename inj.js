@@ -177,7 +177,7 @@
     // BASIC INFO
     InJ.define({
         constructor: InJ,
-        version: '1.0.0'
+        version: '1.0.1'
     });
 
 
@@ -1031,7 +1031,7 @@
             for (i = 0; i < len; i++)
                 // Returns target right when it is found
                 if (method.call(ctx, list[i], i, list) === true)
-                    return list[i];
+                    return util.noAffectOriginal(list[i], prev);
 
             return null;
         },
