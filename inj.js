@@ -515,9 +515,7 @@
         },
 
         toArray: function(){
-            var key,
-                val,
-                ret,
+            var ret,
                 i = 0,
                 item = this === InJ ? arguments[i++] : this,
                 flatten = arguments[i];
