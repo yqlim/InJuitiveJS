@@ -5,9 +5,7 @@
     var proto = [],
         _slice = proto.slice,
         _splice = proto.splice,
-        _push = proto.push,
-        _join = proto.join,
-        _bind = Function.prototype.bind;
+        _push = proto.push;
 
     var polyfill = {
         CustomEvent: function(event, param){
@@ -49,11 +47,13 @@
     var util = {
         wrapper: function(name, method){
             return {
-                value: function(){
-                    if (this === InJ && arguments.length < 1)
-                        throw error.noArgs(name);
-                    return method.apply(this, arguments);
-                }
+                value: typeof method !== 'function'
+                    ? method
+                    : function(){
+                        if (this === InJ && arguments.length < 1)
+                            throw error.noArgs(name);
+                        return method.apply(this, arguments);
+                    }
             }
         },
         method: function(name){
@@ -134,6 +134,11 @@
             : this;
     };
 
+
+    InJ.init.constructor = InJ;
+    InJ.init.prototype.constructor = InJ;
+
+
     InJ.define = function(rootObj, descriptor){
         var k,
             i,
@@ -174,13 +179,6 @@
     };
 
 
-    // BASIC INFO
-    InJ.define({
-        constructor: InJ,
-        version: '1.0.1'
-    });
-
-
     // INTERNAL USE METHODS
     InJ.define({
 
@@ -190,7 +188,6 @@
                 inst = this,
                 vals = InJ.toArray(arguments[i++]),
                 updatePrev = arguments[i],
-                instLen = inst.length,
                 valLen = vals.length;
 
             if (!(inst instanceof InJ.init))
@@ -1121,7 +1118,6 @@
                 len = list.length,
                 method = arguments[i++],
                 ctx = arguments[i],
-                result = [],
                 store = ctx || 0;
 
             for (i = 0; i < len; i++)
@@ -1193,7 +1189,6 @@
 
         on: function(){
             var l,
-                action,
                 x,
                 i = 0,
                 elem = this === InJ ? InJ.toArray(arguments[i++], true) : this,
@@ -1211,7 +1206,6 @@
 
         off: function(){
             var l,
-                action,
                 x,
                 i = 0,
                 elem = this === InJ ? InJ.toArray(arguments[i++], true) : this,
@@ -1499,7 +1493,6 @@
 
         hasAttr: function(){
             var x,
-                val,
                 i = 0,
                 elem = this === InJ ? InJ.toArray(arguments[i++], true) : this,
                 attr = _slice.call(arguments, i),
@@ -2224,14 +2217,9 @@
         },
 
         ancestors: function(){
-            var parent,
-                ancestors,
-                x,
-                l,
-                prev,
+            var prev,
                 elem,
                 until,
-                len,
                 i = 0,
                 result = [];
 
@@ -2244,7 +2232,6 @@
             }
 
             until = arguments[i] || document.body.parentElement;
-            len = elem.length;
 
             if (typeof until === 'number')
                 (function loop(elem, count){
